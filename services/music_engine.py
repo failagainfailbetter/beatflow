@@ -23,6 +23,18 @@ INTERVALS = {
 NOTE_MAP = {'C':0, 'C#':1, 'Db':1, 'D':2, 'D#':3, 'Eb':3, 'E':4, 'F':5, 
             'F#':6, 'Gb':6, 'G':7, 'G#':8, 'Ab':8, 'A':9, 'A#':10, 'Bb':10, 'B':11}
 
+DURATIONS = {
+    '1n': 4.0,
+    '2n': 2.0,
+    '4n': 1.0,
+    '8n': 0.5,
+    '16n': 0.25,
+    '32n': 0.125,
+    '4t': 4.0 / 3.0,
+    '8t': 1.0 / 3.0,
+    '16t': 0.5 / 3.0
+}
+
 def parse_complex_chord(chord_name, default_octave=4):
     chord_name = chord_name.strip()
     
@@ -34,7 +46,7 @@ def parse_complex_chord(chord_name, default_octave=4):
     root_val = NOTE_MAP.get(root_str, 0)
     
     current_octave = default_octave
-    if root_val >= 5: # F, F#, G, G#, A, A#, B
+    if root_val >= 5:
         current_octave -= 1
         
     root_midi = root_val + (current_octave + 1) * 12
@@ -52,7 +64,7 @@ def parse_complex_chord(chord_name, default_octave=4):
     elif "13" in suffix: quality = "13"
     elif "dim" in suffix: quality = "dim"
     elif "sus4" in suffix: quality = "sus4"
-    else: quality = "maj" # Fallback
+    else: quality = "maj"
     
     intervals = INTERVALS.get(quality, INTERVALS["maj"])
     notes = [root_midi + i for i in intervals]
@@ -60,7 +72,7 @@ def parse_complex_chord(chord_name, default_octave=4):
     final_notes = []
     
     for i, note in enumerate(notes):
-        if i == 0: # Root
+        if i == 0:
             final_notes.append(note - 12)
         elif note > root_midi + 12:
             final_notes.append(note) 
@@ -72,142 +84,133 @@ def parse_complex_chord(chord_name, default_octave=4):
 def create_note_event(pitch, start, dur, velocity, track_id):
     return {"note": int(pitch), "start": start, "duration": dur, "velocity": int(velocity), "track_id": track_id}
 
-def get_groove_offset(step_index, groove_type):
+def get_groove_offset(start_time, groove_type):
     offset = 0.0
     jitter = random.uniform(-0.005, 0.005)
+    
+    step_index = int(round(start_time / 0.25))
     
     if groove_type == "swing":
         if step_index % 2 != 0: offset += 0.04
     elif groove_type == "heavy_swing" or groove_type == "shuffle":
         if step_index % 2 != 0: offset += 0.08
-        
     elif groove_type == "drunk":
         offset += random.uniform(-0.02, 0.02)
         if step_index % 2 != 0: offset += 0.03
     elif groove_type == "laid_back":
         offset += 0.02 
-        
     elif groove_type == "rushed":
         offset -= 0.01
 
     return offset + jitter
 
-def parse_drum_grid(grid_str, track_id, midi_note, groove_type="straight"):
-    events = []
-    steps = list(grid_str)
-    step_len = 0.25 
+def parse_duration_stream(stream):
+    notes = []
+    current_time_beats = 0.0
     
-    for i, char in enumerate(steps):
-        if char.lower() == '.': continue
+    if not isinstance(stream, list):
+        return notes
         
+    for item in stream:
+        match = re.match(r'^([A-Za-z0-9_\-\.]+?)(1n|2n|4n|8n|16n|32n|4t|8t|16t)$', str(item).strip())
+        
+        if not match:
+            current_time_beats += 0.25
+            continue
+            
+        event_char = match.group(1)
+        dur_str = match.group(2)
+        duration_beats = DURATIONS[dur_str]
+        
+        if event_char not in ['.', 'rest']:
+            velocity = 100
+            if event_char == 'X': velocity = 127
+            elif event_char == 'g': velocity = 50
+            
+            notes.append({
+                "start_time": current_time_beats,
+                "duration": duration_beats,
+                "event": event_char,
+                "velocity": velocity
+            })
+            
+        current_time_beats += duration_beats
+        
+    return notes
+
+def parse_drum_grid(stream, track_id, midi_note, groove_type="straight"):
+    events = []
+    parsed_notes = parse_duration_stream(stream)
+    
+    for n in parsed_notes:
         vel = 90
-        if char == 'X': vel = 120
-        elif char == 'x': vel = 100
-        elif char == 'g': vel = 50
+        if n["event"] == 'X': vel = 120
+        elif n["event"] == 'x': vel = 100
+        elif n["event"] == 'g': vel = 50
         
-        timing_offset = get_groove_offset(i, groove_type)
-        
-        if groove_type == "drunk" and midi_note == 38: # Snare
+        timing_offset = get_groove_offset(n["start_time"], groove_type)
+        if groove_type == "drunk" and midi_note == 38:
             timing_offset += 0.03
             
-        start_time = i * step_len + timing_offset
+        start_time = n["start_time"] + timing_offset
         if start_time < 0: start_time = 0
             
-        events.append(create_note_event(midi_note, start_time, 0.1, vel, track_id))
+        events.append(create_note_event(midi_note, start_time, n["duration"] * 0.95, vel, track_id))
         
     return events
 
-def parse_harmonic_grid(grid_str, chord_name, instrument_type, track_id, groove_type="straight"):
+def parse_harmonic_grid(stream, chord_name, instrument_type, track_id, groove_type="straight"):
     events = []
     chord_notes = parse_complex_chord(chord_name, default_octave=3)
+    parsed_notes = parse_duration_stream(stream)
     
-    steps = list(grid_str)
-    step_len = 0.25
-    
-    current_note = None
-    current_start = 0
-    current_dur = 0
-    current_vel = 0
-    
-    def commit_note():
-        nonlocal current_note, current_dur
-        if current_note is not None:
-            start_offset = get_groove_offset(int(current_start / step_len), groove_type)
-            final_start = current_start + start_offset
+    for n in parsed_notes:
+        if n["event"] == '-':
+            continue
             
-            final_pitch = current_note
-            if instrument_type == "bass":
-                final_pitch -= 12
-                if final_pitch < 36: final_pitch += 12
+        target_idx = 0
+        num_match = re.search(r'\d', n["event"])
+        if num_match:
+            val = num_match.group()
+            if val == '1': target_idx = 0
+            elif val == '3': target_idx = 1
+            elif val == '5': target_idx = 2
+            elif val == '7': target_idx = 3
+            elif val == '9': target_idx = 4
             
-            events.append(create_note_event(final_pitch, final_start, current_dur * step_len, current_vel, track_id))
-            current_note = None
-            current_dur = 0
-
-    for i, char in enumerate(steps):
-        if char == '.': 
-            commit_note()
-        elif char == '-': 
-            if current_note is not None:
-                current_dur += 1
-        else: 
-            commit_note()
+        if target_idx < len(chord_notes):
+            current_note = chord_notes[target_idx]
+        else:
+            current_note = chord_notes[0]
             
-            target_idx = 0
-            if char == '1': target_idx = 0
-            elif char == '3': target_idx = 1
-            elif char == '5': target_idx = 2
-            elif char == '7': target_idx = 3
-            elif char == '9': target_idx = 4
+        final_pitch = current_note
+        if instrument_type == "bass":
+            final_pitch -= 12
+            if final_pitch < 36: final_pitch += 12
             
-            if target_idx < len(chord_notes):
-                current_note = chord_notes[target_idx]
-            else:
-                current_note = chord_notes[0]
+        start_offset = get_groove_offset(n["start_time"], groove_type)
+        final_start = n["start_time"] + start_offset
+        if final_start < 0: final_start = 0
             
-            current_start = i * step_len
-            current_dur = 1
-            current_vel = random.randint(85, 105)
-            
-    commit_note()
+        current_vel = random.randint(85, 105)
+        
+        events.append(create_note_event(final_pitch, final_start, n["duration"] * 0.95, current_vel, track_id))
+        
     return events
 
-def parse_chord_comping(grid_str, chord_name, track_id, groove_type="straight"):
+def parse_chord_comping(stream, chord_name, track_id, groove_type="straight"):
     events = []
     chord_notes = parse_complex_chord(chord_name, default_octave=4)
+    parsed_notes = parse_duration_stream(stream)
     
-    steps = list(grid_str)
-    step_len = 0.25
-    
-    is_playing = False
-    start_step = 0
-    
-    for i, char in enumerate(steps):
-        if char.lower() == 'x': # Trigger
-            if is_playing:
-                dur = (i - start_step) * step_len
-                offset = get_groove_offset(start_step, groove_type)
-                for note in chord_notes:
-                    events.append(create_note_event(note, start_step * step_len + offset, dur * 0.95, random.randint(80, 95), track_id))
+    for n in parsed_notes:
+        if n["event"].lower() == 'x':
+            offset = get_groove_offset(n["start_time"], groove_type)
+            final_start = n["start_time"] + offset
+            if final_start < 0: final_start = 0
+            vel = random.randint(80, 95)
             
-            is_playing = True
-            start_step = i
-            
-        elif char == '.': # Rest
-            if is_playing:
-                dur = (i - start_step) * step_len
-                offset = get_groove_offset(start_step, groove_type)
-                for note in chord_notes:
-                    events.append(create_note_event(note, start_step * step_len + offset, dur * 0.95, random.randint(80, 95), track_id))
-                is_playing = False
+            for note in chord_notes:
+                events.append(create_note_event(note, final_start, n["duration"] * 0.95, vel, track_id))
                 
-        elif char == '-': # Sustain
-            pass 
-            
-    if is_playing:
-        dur = (len(steps) - start_step) * step_len
-        offset = get_groove_offset(start_step, groove_type)
-        for note in chord_notes:
-            events.append(create_note_event(note, start_step * step_len + offset, dur * 0.95, random.randint(80, 95), track_id))
-            
     return events

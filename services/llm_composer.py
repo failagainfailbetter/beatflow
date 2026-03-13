@@ -1,6 +1,7 @@
 import os
 import json
 import random
+import re
 from openai import OpenAI
 from dotenv import load_dotenv
 from services.music_engine import (
@@ -23,9 +24,9 @@ User Request: "{vibe}"
 Key: {key}
 
 Instructions:
-1. **Analyze the Genre**: Determine the typical structure (e.g., Techno = Slow buildup; Pop = Verse/Chorus; Trap = Hook-centric).
-2. **Chain of Loops**: Create a progression of short sections (2-4 bars) that evolve in energy.
-3. **Harmony**: Choose chords that fit the genre's color (e.g., House = m7 chords; Neo-soul = m9/11).
+1. **Analyze the Genre**: Determine the typical structure.
+2. **Chain of Loops**: Create a progression of short sections (2-4 bars).
+3. **Harmony**: Choose chords that fit the genre's color.
 
 Return JSON ONLY:
 {{
@@ -42,55 +43,44 @@ Return JSON ONLY:
 
 PATTERN_PROMPT = """
 You are a World-Class Rhythm Composer.
-Task: Compose MIDI grids for section "{section}".
+Task: Compose MIDI duration streams for section "{section}".
 
 Context:
-- **Genre/Vibe**: {vibe}
-- **BPM**: {bpm}
-- **Energy**: {energy}
-- **Chords**: {chords}
+- User Request / Genre: {vibe}
+- BPM: {bpm}
+- Energy: {energy}
+- Chords: {chords}
 
-**STEP 1: RHYTHMIC DNA ANALYSIS (Mental Sandbox)**
-Before writing any grids, you must design the rhythm engine. Explain your choices in the "analysis" field:
-1. **Kick & Snare Pattern**:
-   - Is it "Four-on-the-floor" (House)? "Boom-Bap" (HipHop)? "Half-time" (Trap)?
-   - Where does the Snare land? (2/4? Beat 3? Ghost notes?)
-2. **Hi-Hat Subdivision**:
-   - Do we use 8th notes (Steady)? 16th notes (Busy)? 
-   - Do we need 32nd note rolls ('r') for Trap/Drill energy?
-3. **Bassline Behavior**:
-   - "Anchored": Long root notes (Pop/Ballad)?
-   - "Pumping": Strictly off-beats (..1...1.) (Trance/House)?
-   - "Walking/Grooving": Syncopated 16th notes (Funk/Fusion)?
-4. **Chord/Keys Role**:
-   - "Pads": Long sustains (Atmosphere)?
-   - "Stabs": Rhythmic hits reacting to the Snare (House/Jazz)?
-   - "Pulse": Staccato 8th notes (Rock/Synthwave)?
+**Duration Stream Notation**:
+You MUST output arrays of strings representing musical events and their exact durations.
+Format: <Event><Duration>
+- Events: 'x' (Hit/Play), 'X' (Accent), 'g' (Ghost), '.' (Rest), '1'/'3'/'5'/'7' (Scale degrees - FOR BASS ONLY), '-' (Sustain).
+- Durations: '1n', '2n', '4n', '8n', '16n', '8t' (Eighth Triplet, 3 fit in 1 beat), '16t'.
+- Sum of durations in each array MUST EXACTLY equal 4.0 beats (1 Bar).
 
-**STEP 2: GENERATE GRIDS**
-Based on your analysis above, write the 16-step grids.
+**CRITICAL INSTRUCTIONS FOR INSTRUMENTS**:
+1. **Piano/Keys**: You MUST use 'x' or 'X' to trigger chords (e.g., "x8n", "x8t"). DO NOT use numbers for piano. Think deeply about the comping rhythm! Do NOT just lay boring whole notes. You MUST independently design the rhythm (syncopation, triplets, stabs, laid-back chords) based on the user's vibe!
+2. **Bass**: Use '1', '3', '5', etc. for scale degrees (e.g., "1_8n", ".16n", "5_16n").
+3. **Drums**: Design the groove based on the genre (e.g., four-on-the-floor, boom-bap, trap rolls).
 
-**Grid Legend (16 chars)**:
-- Drums: 'x'=Hit, 'X'=Accent, 'g'=Ghost, 'r'=Roll(2), 'R'=Roll(3), '.'=Rest
-- Bass: '1'/'5'=Notes, '-'=Sustain, '.'=Rest
-- Keys: 'x'=Chord Hit, '-'=Sustain, '.'=Rest
-
-**Constraint**: Your grids **MUST** match your analysis. Do not analyze "Steady Bass" and then write syncopated funk bass.
+**JSON OUTPUT FORMAT (NO EXAMPLES PROVIDED)**:
+I am NOT giving you any rhythm examples because you must THINK FOR YOURSELF. 
+Replace all "<generate_array_here>" placeholders with your own original duration stream arrays.
 
 Return JSON ONLY:
 {{
-  "analysis": "Genre is Deep House (120 BPM). 1) Kick needs 4-on-the-floor. 2) Hats need open-hat on off-beats. 3) Bass MUST be 'pumping' on the off-beats to interact with the kick sidechain. 4) Keys will be short stabs on the 'and' of beats.",
-  "groove": "straight",
-  "kick_main":  "X...X...X...X...", 
-  "kick_fill":  "X...X...X..XX...",
-  "snare_main": "....X.......X...",
-  "snare_fill": "....X...X...X...",
-  "hihat_main": "..x...x...x...x.",
-  "hihat_fill": "..x.r.x...x.x.x.",
-  "bass_main":  "..1...1...1...1.", 
-  "bass_fill":  "..1...1...3...5.",
-  "keys_main":  "..x...x...x...x.",
-  "keys_fill":  "x...x...x......."
+  "analysis": "Explain your rhythm design here. E.g., 'User wants triplet piano, so I MUST use 8t or 16t for keys_main. I will make the bass syncopated...'",
+  "groove": "straight or swing",
+  "kick_main":  ["<generate_array_here>"], 
+  "kick_fill":  ["<generate_array_here>"],
+  "snare_main": ["<generate_array_here>"],
+  "snare_fill": ["<generate_array_here>"],
+  "hihat_main": ["<generate_array_here>"],
+  "hihat_fill": ["<generate_array_here>"],
+  "bass_main":  ["<generate_array_here>"],
+  "bass_fill":  ["<generate_array_here>"],
+  "keys_main":  ["<generate_array_here>"],
+  "keys_fill":  ["<generate_array_here>"]
 }}
 """
 
@@ -108,16 +98,29 @@ def get_json(prompt, model=MODEL_NAME):
         print(f"LLM Error: {e}")
         return {}
 
-def apply_random_spice(grid_str, probability=0.1):
-    chars = list(grid_str)
-    new_chars = chars.copy()
-    for i in range(len(chars)):
-        if chars[i] == '.' and random.random() < (probability * 0.3):
-            if i % 4 != 0: new_chars[i] = 'g'
-        elif chars[i] == 'x' and random.random() < probability:
-            new_chars[i] = 'X' if random.random() > 0.5 else 'x'
-    return "".join(new_chars)
-
+def apply_random_spice(stream, probability=0.1):
+    if not isinstance(stream, list):
+        return stream
+        
+    new_stream = []
+    for item in stream:
+        match = re.match(r'^([A-Za-z0-9_\-\.]+?)(1n|2n|4n|8n|16n|32n|4t|8t|16t)$', str(item).strip())
+        if not match:
+            new_stream.append(item)
+            continue
+            
+        event_char = match.group(1)
+        dur_str = match.group(2)
+        
+        new_event = event_char
+        if event_char == '.' and random.random() < (probability * 0.3):
+            new_event = 'g'
+        elif event_char == 'x' and random.random() < probability:
+            new_event = 'X' if random.random() > 0.5 else 'x'
+            
+        new_stream.append(f"{new_event}{dur_str}")
+        
+    return new_stream
 
 def generate_section_clips(section_data, vibe, bpm, track_ids):
     sec_name = section_data.get("name", "Section")
@@ -170,7 +173,7 @@ def generate_section_clips(section_data, vibe, bpm, track_ids):
             for e in s: e["start"] += offset; clips["snare"].append(e)
             
         h_grid = get_grid("hihat")
-        if not h_grid: h_grid = "x.x.x.x.x.x.x.x."
+        if not h_grid: h_grid = ["x8n", "x8n", "x8n", "x8n", "x8n", "x8n", "x8n", "x8n"]
         if not is_fill_bar: h_grid = apply_random_spice(h_grid, 0.1)
         h = parse_drum_grid(h_grid, track_ids["hat"], 42, groove_type)
         for e in h: e["start"] += offset; clips["hat"].append(e)
