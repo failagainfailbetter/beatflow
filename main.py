@@ -2,11 +2,11 @@ import uuid
 import os
 from fastapi import FastAPI, BackgroundTasks, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
-from services.llm_composer import generate_music_json
+from services.llm_composer import generate_music_json, _missing_llm_vars
 from services.midi_exporter import save_midi_file
 
 app = FastAPI()
@@ -36,6 +36,15 @@ if static_files:
 class MusicRequest(BaseModel):
     prompt: str
 
+@app.get("/api/health")
+async def health_check():
+    llm_configured = len(_missing_llm_vars) == 0
+    return {
+        "status": "ok",
+        "llm_configured": llm_configured,
+        "missing_env_vars": _missing_llm_vars,
+    }
+
 @app.post("/api/generate")
 async def generate(request: MusicRequest):
     try:
@@ -44,7 +53,7 @@ async def generate(request: MusicRequest):
         return data
     except Exception as e:
         print(f"Error generating music: {e}")
-        return {"error": str(e)}
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 @app.post("/api/export")
 async def export_midi(request: Request, background_tasks: BackgroundTasks):
@@ -65,7 +74,6 @@ async def export_midi(request: Request, background_tasks: BackgroundTasks):
         )
     except Exception as e:
         print(f"Error exporting MIDI: {e}")
-        from fastapi.responses import JSONResponse
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 @app.get("/")
