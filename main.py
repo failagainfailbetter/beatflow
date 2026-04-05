@@ -24,13 +24,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-if not os.path.exists("static"):
-    os.makedirs("static")
+os.makedirs("static", exist_ok=True)
 
 if os.path.exists("static/assets"):
     app.mount("/assets", StaticFiles(directory="static/assets"), name="assets")
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
+static_files = [f for f in os.listdir("static") if f != ".gitkeep"] if os.path.exists("static") else []
+if static_files:
+    app.mount("/static", StaticFiles(directory="static"), name="static")
 
 class MusicRequest(BaseModel):
     prompt: str
@@ -69,7 +70,7 @@ async def export_midi(request: Request, background_tasks: BackgroundTasks):
 
 @app.get("/")
 async def read_root():
-    return FileResponse('static/index.html')
+    return {"status": "ok", "message": "BeatFlow API is running"}
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))

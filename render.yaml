@@ -14,11 +14,10 @@ services:
         sync: false
 
   # Next.js frontend (static site)
-  - type: web
+  - type: static
     name: beatflow-frontend
-    runtime: static
     buildCommand: npm install -g pnpm && pnpm install && pnpm build
-    staticPublishPath: ./out
+    staticPublishPath: frontend/out
     rootDir: frontend
     envVars:
       - key: NEXT_PUBLIC_BACKEND_URL
