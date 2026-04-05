@@ -13,7 +13,18 @@ api_key = os.getenv("OPENROUTER_API_KEY")
 base_url = os.getenv("LLM_BASE_URL")
 model_name = os.getenv("LLM_MODEL")
 
-client = OpenAI(base_url=base_url, api_key=api_key)
+_missing_llm_vars = [name for name, val in [
+    ("OPENROUTER_API_KEY", api_key),
+    ("LLM_BASE_URL", base_url),
+    ("LLM_MODEL", model_name),
+] if not val]
+
+if _missing_llm_vars:
+    print(f"WARNING: Missing required environment variables: {', '.join(_missing_llm_vars)}. "
+          "The 'generate beats' feature will not work until these are set.")
+    client = None
+else:
+    client = OpenAI(base_url=base_url, api_key=api_key)
 MODEL_NAME = model_name
 
 STRUCTURE_PROMPT = """
@@ -85,6 +96,11 @@ Return JSON ONLY:
 """
 
 def get_json(prompt, model=MODEL_NAME):
+    if _missing_llm_vars:
+        raise ValueError(
+            f"Missing required environment variables: {', '.join(_missing_llm_vars)}. "
+            "Please set OPENROUTER_API_KEY, LLM_BASE_URL, and LLM_MODEL."
+        )
     messages = [
         {"role": "system", "content": "You are a JSON-only response bot."}, 
         {"role": "user", "content": prompt}
@@ -96,7 +112,7 @@ def get_json(prompt, model=MODEL_NAME):
         return json.loads(content)
     except Exception as e:
         print(f"LLM Error: {e}")
-        return {}
+        raise
 
 def apply_random_spice(stream, probability=0.1):
     if not isinstance(stream, list):
