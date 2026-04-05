@@ -11,12 +11,11 @@ from services.music_engine import (
 load_dotenv()
 api_key = os.getenv("OPENROUTER_API_KEY")
 base_url = os.getenv("LLM_BASE_URL")
-model_name = os.getenv("LLM_MODEL")
+model_name = os.getenv("LLM_MODEL", "meta-llama/llama-3.3-70b:free")
 
 _missing_llm_vars = [name for name, val in [
     ("OPENROUTER_API_KEY", api_key),
     ("LLM_BASE_URL", base_url),
-    ("LLM_MODEL", model_name),
 ] if not val]
 
 if _missing_llm_vars:
@@ -27,71 +26,73 @@ else:
     client = OpenAI(base_url=base_url, api_key=api_key)
 MODEL_NAME = model_name
 
-STRUCTURE_PROMPT = """
-You are a Senior Music Director.
-Your Goal: Design a sophisticated song structure based on the user's request.
+# Probability that a non-last bar becomes a fill bar (adds musical interest)
+FILL_BAR_PROBABILITY = 0.25
+# Probability that a rest event becomes a ghost note during humanization
+REST_TO_GHOST_MULTIPLIER = 0.4
+# Probability that a hit becomes an accent (vs. a ghost) during humanization
+ACCENT_PROBABILITY = 0.5
+
+COMBINED_PROMPT = """
+You are a Senior Music Director AND World-Class Rhythm Composer.
+Your Goal: Create a complete, full-length song composition with structure AND MIDI patterns in ONE response.
 
 User Request: "{vibe}"
-Key: {key}
 
-Instructions:
-1. **Analyze the Genre**: Determine the typical structure.
-2. **Chain of Loops**: Create a progression of short sections (2-4 bars).
-3. **Harmony**: Choose chords that fit the genre's color.
+SONG STRUCTURE REQUIREMENTS:
+- Generate 8-12 sections forming a complete arrangement: intro, verse, pre-chorus, chorus, bridge, build, drop, breakdown, outro
+- Each section should be 4-8 bars long (aim for 8 bars on main sections)
+- Plan a dynamic energy arc: sparse intro → building verse → peak chorus → atmospheric breakdown → drop → outro
+- Use rich, sophisticated harmony: extended chords like Cmaj7, F#m9b5, Am11, Dm9, G13, Bb13sus4, Fmaj9, Em7b9
 
-Return JSON ONLY:
+FOR EACH SECTION, provide complete MIDI patterns using Duration Stream Notation:
+- Each array represents exactly ONE bar (4.0 beats total)
+- Format per event: <Event><Duration>
+- Events: 'x' (Hit), 'X' (Accent/strong hit), 'g' (Ghost note, quiet), '.' (Rest/silence), scale degrees for bass only: '1','3','5','7','9', '-' (Sustain/tie)
+- Durations: '1n'=4 beats, '2n'=2 beats, '4n'=1 beat, '8n'=0.5, '16n'=0.25, '8t'=0.333 (triplet eighth), '16t'=0.167
+- CRITICAL: durations in each array MUST sum to exactly 4.0 beats
+
+MUSICAL REQUIREMENTS:
+1. Drums: Design genre-specific grooves. Snare typically on beats 2 and 4. Include ghost notes (g) for humanization and texture. Kick patterns should anchor the groove.
+2. Bass: Use scale degrees (1=root, 3=third, 5=fifth, 7=seventh). Syncopate! Avoid quarter-note monotony. Walk between chord tones.
+3. Keys/Piano: Use 'x'/'X' for chord hits only (no numbers). Syncopate the comping rhythm. Stabs, anticipations, offbeats - NO boring whole notes.
+4. Fill patterns (kick_fill, snare_fill, hihat_fill, bass_fill, keys_fill): Make these busier/more complex than main patterns - fills add excitement at phrase endings.
+5. Vary the groove field: "straight", "swing", "heavy_swing", "drunk", or "laid_back" - vary between sections for musical interest.
+6. Energy contrast: sparse breakdown sections should have minimal drums and spacious piano; drop sections should be dense and powerful.
+
+Return JSON ONLY with this structure (generate all 8-12 sections - DO NOT truncate):
 {{
   "bpm": 120,
   "key": "A Minor",
   "sections": [
-    {{"name": "Intro", "length": 4, "energy": "Low", "texture": "Sparse", "chords": ["Am7"]}},
-    {{"name": "Groove A", "length": 4, "energy": "Medium", "texture": "Steady", "chords": ["Am7", "D9"]}},
-    {{"name": "Breakdown", "length": 2, "energy": "Low", "texture": "Atmospheric", "chords": ["Fmaj7"]}},
-    {{"name": "Drop/Chorus", "length": 4, "energy": "High", "texture": "Busy", "chords": ["Am7", "G", "F", "Em7"]}}
+    {{
+      "name": "Intro",
+      "length": 8,
+      "energy": "Low",
+      "texture": "Sparse",
+      "chords": ["Am11", "Fmaj9", "Cmaj7", "G13"],
+      "groove": "straight",
+      "kick_main":  ["<one bar of kick hits summing to 4 beats>"],
+      "kick_fill":  ["<busier fill bar summing to 4 beats>"],
+      "snare_main": ["<one bar of snare hits summing to 4 beats>"],
+      "snare_fill": ["<busier fill bar summing to 4 beats>"],
+      "hihat_main": ["<one bar of hihat hits summing to 4 beats>"],
+      "hihat_fill": ["<busier fill bar summing to 4 beats>"],
+      "bass_main":  ["<one bar using scale degrees summing to 4 beats>"],
+      "bass_fill":  ["<walking/busier bass fill summing to 4 beats>"],
+      "keys_main":  ["<one bar of chord hits (x/X) summing to 4 beats>"],
+      "keys_fill":  ["<syncopated fill comping summing to 4 beats>"]
+    }},
+    {{ "name": "Verse 1", "length": 8, ... }},
+    {{ "name": "Pre-Chorus", "length": 4, ... }},
+    {{ "name": "Chorus", "length": 8, ... }},
+    {{ "name": "Verse 2", "length": 8, ... }},
+    {{ "name": "Bridge", "length": 8, ... }},
+    {{ "name": "Build", "length": 4, ... }},
+    {{ "name": "Drop", "length": 8, ... }},
+    {{ "name": "Breakdown", "length": 4, ... }},
+    {{ "name": "Outro", "length": 4, ... }}
   ]
-}}
-"""
-
-PATTERN_PROMPT = """
-You are a World-Class Rhythm Composer.
-Task: Compose MIDI duration streams for section "{section}".
-
-Context:
-- User Request / Genre: {vibe}
-- BPM: {bpm}
-- Energy: {energy}
-- Chords: {chords}
-
-**Duration Stream Notation**:
-You MUST output arrays of strings representing musical events and their exact durations.
-Format: <Event><Duration>
-- Events: 'x' (Hit/Play), 'X' (Accent), 'g' (Ghost), '.' (Rest), '1'/'3'/'5'/'7' (Scale degrees - FOR BASS ONLY), '-' (Sustain).
-- Durations: '1n', '2n', '4n', '8n', '16n', '8t' (Eighth Triplet, 3 fit in 1 beat), '16t'.
-- Sum of durations in each array MUST EXACTLY equal 4.0 beats (1 Bar).
-
-**CRITICAL INSTRUCTIONS FOR INSTRUMENTS**:
-1. **Piano/Keys**: You MUST use 'x' or 'X' to trigger chords (e.g., "x8n", "x8t"). DO NOT use numbers for piano. Think deeply about the comping rhythm! Do NOT just lay boring whole notes. You MUST independently design the rhythm (syncopation, triplets, stabs, laid-back chords) based on the user's vibe!
-2. **Bass**: Use '1', '3', '5', etc. for scale degrees (e.g., "1_8n", ".16n", "5_16n").
-3. **Drums**: Design the groove based on the genre (e.g., four-on-the-floor, boom-bap, trap rolls).
-
-**JSON OUTPUT FORMAT (NO EXAMPLES PROVIDED)**:
-I am NOT giving you any rhythm examples because you must THINK FOR YOURSELF. 
-Replace all "<generate_array_here>" placeholders with your own original duration stream arrays.
-
-Return JSON ONLY:
-{{
-  "analysis": "Explain your rhythm design here. E.g., 'User wants triplet piano, so I MUST use 8t or 16t for keys_main. I will make the bass syncopated...'",
-  "groove": "straight or swing",
-  "kick_main":  ["<generate_array_here>"], 
-  "kick_fill":  ["<generate_array_here>"],
-  "snare_main": ["<generate_array_here>"],
-  "snare_fill": ["<generate_array_here>"],
-  "hihat_main": ["<generate_array_here>"],
-  "hihat_fill": ["<generate_array_here>"],
-  "bass_main":  ["<generate_array_here>"],
-  "bass_fill":  ["<generate_array_here>"],
-  "keys_main":  ["<generate_array_here>"],
-  "keys_fill":  ["<generate_array_here>"]
 }}
 """
 
@@ -99,7 +100,7 @@ def get_json(prompt, model=MODEL_NAME):
     if _missing_llm_vars:
         raise ValueError(
             f"Missing required environment variables: {', '.join(_missing_llm_vars)}. "
-            "Please set OPENROUTER_API_KEY, LLM_BASE_URL, and LLM_MODEL."
+            "Please set OPENROUTER_API_KEY and LLM_BASE_URL."
         )
     messages = [
         {"role": "system", "content": "You are a JSON-only response bot."}, 
@@ -114,110 +115,111 @@ def get_json(prompt, model=MODEL_NAME):
         print(f"LLM Error: {e}")
         raise
 
-def apply_random_spice(stream, probability=0.1):
+def apply_random_spice(stream, probability=0.15):
     if not isinstance(stream, list):
         return stream
-        
+
     new_stream = []
     for item in stream:
         match = re.match(r'^([A-Za-z0-9_\-\.]+?)(1n|2n|4n|8n|16n|32n|4t|8t|16t)$', str(item).strip())
         if not match:
             new_stream.append(item)
             continue
-            
+
         event_char = match.group(1)
         dur_str = match.group(2)
-        
+
         new_event = event_char
-        if event_char == '.' and random.random() < (probability * 0.3):
+        if event_char == '.' and random.random() < (probability * REST_TO_GHOST_MULTIPLIER):
             new_event = 'g'
         elif event_char == 'x' and random.random() < probability:
-            new_event = 'X' if random.random() > 0.5 else 'x'
-            
+            new_event = 'X' if random.random() > ACCENT_PROBABILITY else 'g'
+
         new_stream.append(f"{new_event}{dur_str}")
-        
+
     return new_stream
 
-def generate_section_clips(section_data, vibe, bpm, track_ids):
-    sec_name = section_data.get("name", "Section")
-    chords = section_data.get("chords", [])
-    length = section_data.get("length", 2)
-    energy = section_data.get("energy", "Medium")
-    texture = section_data.get("texture", "Steady")
-    
-    prompt = PATTERN_PROMPT.format(
-        section=sec_name, 
-        vibe=vibe, 
-        bpm=bpm, 
-        energy=energy, 
-        texture=texture, 
-        chords=str(chords)
-    )
-    patterns = get_json(prompt)
-    
-    if not patterns: patterns = {}
-    
-    analysis = patterns.get("analysis", "No analysis provided.")
-    groove_type = patterns.get("groove", "straight").lower()
-    
-    print(f"  > Thought: {analysis}")
-    print(f"  > Groove: {groove_type} | BPM: {bpm}")
+
+def generate_section_clips(section_data, bpm, track_ids):
+    chords = section_data.get("chords", ["Am7"])
+    length = section_data.get("length", 4)
+    groove_type = section_data.get("groove", "straight").lower()
+
+    print(f"  > Groove: {groove_type} | BPM: {bpm} | Bars: {length}")
 
     clips = {"kick": [], "snare": [], "hat": [], "bass": [], "piano": []}
-    
+
     for bar in range(length):
         offset = bar * 4.0
-        is_fill_bar = (bar == length - 1)
+        # Use fill patterns for the last bar of each section plus ~25% of other bars
+        is_fill_bar = (bar == length - 1) or (bar != 0 and random.random() < FILL_BAR_PROBABILITY)
         suffix = "_fill" if is_fill_bar else "_main"
-        
+
         def get_grid(instr):
-            grid = patterns.get(f"{instr}{suffix}")
-            if not grid: grid = patterns.get(f"{instr}_main")
-            if not grid: grid = patterns.get(instr) 
+            grid = section_data.get(f"{instr}{suffix}")
+            if not grid:
+                grid = section_data.get(f"{instr}_main")
+            if not grid:
+                grid = section_data.get(instr)
             return grid
 
         k_grid = get_grid("kick")
         if k_grid:
-            if not is_fill_bar: k_grid = apply_random_spice(k_grid, 0.05)
+            if not is_fill_bar:
+                k_grid = apply_random_spice(k_grid, 0.08)
             k = parse_drum_grid(k_grid, track_ids["kick"], 36, groove_type)
-            for e in k: e["start"] += offset; clips["kick"].append(e)
+            for e in k:
+                e["start"] += offset
+                clips["kick"].append(e)
 
         s_grid = get_grid("snare")
         if s_grid:
-            if not is_fill_bar: s_grid = apply_random_spice(s_grid, 0.05)
+            if not is_fill_bar:
+                s_grid = apply_random_spice(s_grid, 0.08)
             s = parse_drum_grid(s_grid, track_ids["snare"], 38, groove_type)
-            for e in s: e["start"] += offset; clips["snare"].append(e)
-            
+            for e in s:
+                e["start"] += offset
+                clips["snare"].append(e)
+
         h_grid = get_grid("hihat")
-        if not h_grid: h_grid = ["x8n", "x8n", "x8n", "x8n", "x8n", "x8n", "x8n", "x8n"]
-        if not is_fill_bar: h_grid = apply_random_spice(h_grid, 0.1)
+        if not h_grid:
+            h_grid = ["x8n", "x8n", "x8n", "x8n", "x8n", "x8n", "x8n", "x8n"]
+        if not is_fill_bar:
+            h_grid = apply_random_spice(h_grid, 0.15)
         h = parse_drum_grid(h_grid, track_ids["hat"], 42, groove_type)
-        for e in h: e["start"] += offset; clips["hat"].append(e)
-            
-        current_chord = chords[bar % len(chords)]
-        
+        for e in h:
+            e["start"] += offset
+            clips["hat"].append(e)
+
+        current_chord = chords[bar % len(chords)] if chords else "Am7"
+
         b_grid = get_grid("bass")
         if b_grid:
             b = parse_harmonic_grid(b_grid, current_chord, "bass", track_ids["bass"], groove_type)
-            for e in b: e["start"] += offset; clips["bass"].append(e)
-            
+            for e in b:
+                e["start"] += offset
+                clips["bass"].append(e)
+
         p_grid = get_grid("keys")
         if p_grid:
             p = parse_chord_comping(p_grid, current_chord, track_ids["piano"], groove_type)
-            for e in p: e["start"] += offset; clips["piano"].append(e)
-            
+            for e in p:
+                e["start"] += offset
+                clips["piano"].append(e)
+
     return clips
+
 
 def generate_music_json(user_prompt: str):
     print(f"request: {user_prompt}")
-    
-    bp_data = get_json(STRUCTURE_PROMPT.format(vibe=user_prompt, key="Random"))
-    bpm = bp_data.get("bpm", 90)
-    sections = bp_data.get("sections", [])
-    
+
+    result = get_json(COMBINED_PROMPT.format(vibe=user_prompt))
+    bpm = result.get("bpm", 90)
+    sections = result.get("sections", [])
+
     if not sections:
-        sections = [{"name": "Jam", "length": 4, "energy": "Medium", "chords": ["Cm7", "F9"]}]
-        
+        sections = [{"name": "Jam", "length": 4, "energy": "Medium", "chords": ["Cm7", "F9"], "groove": "straight"}]
+
     final_json = {
         "bpm": bpm,
         "tracks": [
@@ -230,23 +232,24 @@ def generate_music_json(user_prompt: str):
         "clips": {},
         "arrangement": []
     }
-    
+
     track_ids = {
-        "piano": "t_piano", "bass": "t_bass", 
+        "piano": "t_piano", "bass": "t_bass",
         "kick": "t_kick", "snare": "t_snare", "hat": "t_hat"
     }
-    
+
     curr_bar = 0
-    
+
     for i, sec in enumerate(sections):
         print(f"Composing Section {i+1}: {sec.get('name')}...")
-        section_clips = generate_section_clips(sec, user_prompt, bpm, track_ids)
-        
+        section_clips = generate_section_clips(sec, bpm, track_ids)
+
         for instr_name, events in section_clips.items():
-            if not events: continue
-            
+            if not events:
+                continue
+
             unique_id = f"s{i}_{sec.get('name')}_{instr_name}".replace(" ", "_")
-            
+
             final_json["clips"][unique_id] = events
             final_json["arrangement"].append({
                 "section": sec.get("name"),
@@ -254,7 +257,7 @@ def generate_music_json(user_prompt: str):
                 "track_id": track_ids[instr_name],
                 "clip_id": unique_id
             })
-            
+
         curr_bar += sec.get("length", 2)
-        
+
     return final_json
