@@ -58,7 +58,6 @@ export function PianoRoll({
               <Timeline 
                 totalBeats={totalBeats} 
                 beatWidth={beatWidth} 
-                playheadBeat={playheadBeat} 
                 onSeek={onSeek} 
               />
             </div>
