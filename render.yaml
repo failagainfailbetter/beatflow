@@ -17,7 +17,7 @@ services:
   - type: web
     name: beatflow-frontend
     runtime: static
-    buildCommand: pnpm install && pnpm build
+    buildCommand: npm install -g pnpm && pnpm install && pnpm build
     staticPublishPath: ./out
     rootDir: frontend
     envVars:
