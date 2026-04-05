@@ -71,7 +71,6 @@ export function PianoRoll({
               totalBeats={totalBeats}
               snapValue={snapValue}
               tool={tool}
-              playheadBeat={playheadBeat}
               activeTrackId={activeTrackId}
               onNotesChange={onNotesChange}
               onSelectionChange={onSelectionChange}
