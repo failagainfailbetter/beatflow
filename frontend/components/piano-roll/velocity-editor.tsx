@@ -21,7 +21,7 @@ export function VelocityEditor({
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const dragInfo = useRef<{ noteId: string; initialVel: number } | null>(null)
   const height = 80
-  const animationRef = useRef<number>()
+  const animationRef = useRef<number | undefined>(undefined)
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current
