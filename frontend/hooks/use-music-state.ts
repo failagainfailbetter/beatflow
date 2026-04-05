@@ -160,7 +160,8 @@ export const useMusicStore = create<MusicState>((set, get) => ({
   generate: async (prompt) => {
     set({ isGenerating: true })
     try {
-      const res = await fetch("http://127.0.0.1:8000/api/generate", {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000"
+      const res = await fetch(`${backendUrl}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt }),
@@ -202,7 +203,8 @@ export const useMusicStore = create<MusicState>((set, get) => ({
     const state = get()
     const currentMusicData = notesToMusicData(state.notes, state.bpm, state.tracks)
     try {
-      const res = await fetch("/backend/export", {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000"
+      const res = await fetch(`${backendUrl}/api/export`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(currentMusicData),
