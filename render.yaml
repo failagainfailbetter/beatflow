@@ -1,0 +1,25 @@
+services:
+  # Python backend (FastAPI)
+  - type: web
+    name: beatflow-backend
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: LLM_BASE_URL
+        sync: false
+      - key: LLM_MODEL
+        sync: false
+
+  # Next.js frontend (static site)
+  - type: web
+    name: beatflow-frontend
+    runtime: static
+    buildCommand: npm install -g pnpm && pnpm install && pnpm build
+    staticPublishPath: ./out
+    rootDir: frontend
+    envVars:
+      - key: NEXT_PUBLIC_BACKEND_URL
+        sync: false
