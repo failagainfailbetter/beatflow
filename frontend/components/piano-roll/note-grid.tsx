@@ -54,7 +54,7 @@ export function NoteGrid({
   const interactionCanvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<DragState>({ type: "none" })
-  const requestRef = useRef<number>()
+  const requestRef = useRef<number | undefined>(undefined)
   const playheadBeat = usePlayhead()
 
   const [low, high] = noteRange
