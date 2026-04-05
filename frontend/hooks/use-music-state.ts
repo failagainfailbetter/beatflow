@@ -166,6 +166,10 @@ export const useMusicStore = create<MusicState>((set, get) => ({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt }),
       })
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}))
+        throw new Error(errorData.error || `Request failed with status ${res.status}`)
+      }
       const data: MusicData = await res.json()
       if (data.bpm) set({ bpm: data.bpm })
       if (data.tracks?.length) {
