@@ -161,6 +161,8 @@ export const useMusicStore = create<MusicState>((set, get) => ({
     set({ isGenerating: true })
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000"
+
+      // Start the generation job and get a job ID immediately (202 Accepted)
       const res = await fetch(`${backendUrl}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -170,7 +172,40 @@ export const useMusicStore = create<MusicState>((set, get) => ({
         const errorData = await res.json().catch(() => ({}))
         throw new Error(errorData.error || `Request failed with status ${res.status}`)
       }
-      const data: MusicData = await res.json()
+      const { job_id } = await res.json()
+
+      // Poll the status endpoint until the job completes (with exponential backoff)
+      let pollDelay = 1000
+      const maxPollDelay = 5000
+      const pollTimeoutMs = 5 * 60 * 1000 // 5-minute total timeout
+      const pollStart = Date.now()
+      const data: MusicData = await (async () => {
+        while (true) {
+          await new Promise(r => setTimeout(r, pollDelay))
+          pollDelay = Math.min(pollDelay * 1.5, maxPollDelay)
+
+          if (Date.now() - pollStart > pollTimeoutMs) {
+            throw new Error("Generation timed out. Please try again.")
+          }
+
+          const statusRes = await fetch(`${backendUrl}/api/generate/${job_id}`)
+          // 500 is an expected job-error response (contains {"status":"error","error":"..."}),
+          // so only throw on other unexpected non-OK statuses.
+          if (!statusRes.ok && statusRes.status !== 500) {
+            throw new Error(`Status check failed with HTTP ${statusRes.status}`)
+          }
+          const statusData = await statusRes.json()
+
+          if (statusData.status === "completed") {
+            return statusData.result as MusicData
+          }
+          if (statusData.status === "error") {
+            throw new Error(statusData.error || "Generation failed")
+          }
+          // still pending/running – keep polling
+        }
+      })()
+
       if (data.bpm) set({ bpm: data.bpm })
       if (data.tracks?.length) {
         set({ tracks: data.tracks, activeTrackId: data.tracks[0].id })
